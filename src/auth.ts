@@ -82,9 +82,14 @@ export const loginRoute = (req: IncomingMessage, res: ServerResponse) => {
     }
 
     const bodyKeys = Object.keys(credentials);
-    if (bodyKeys.length !== 2 || !bodyKeys.includes("username") || !bodyKeys.includes("password")) {
+    if (!bodyKeys.includes("username") || !bodyKeys.includes("password")) {
       res.statusCode = 400;
       res.end("Request body must contain only 'username' and 'password' fields.");
+      return;
+    }
+    if(credentials.username === "" || credentials.password === ""){
+      res.statusCode = 400;
+      res.end("Invalid username or password.");
       return;
     }
 
@@ -150,7 +155,7 @@ export const signupRoute = (req: IncomingMessage, res: ServerResponse) => {
     }
 
     const bodyKeys = Object.keys(credentials);
-    if (bodyKeys.length !== 2 || !bodyKeys.includes("username") || !bodyKeys.includes("password")) {
+    if (!bodyKeys.includes("username") || !bodyKeys.includes("password")) {
       res.statusCode = 400;
       res.end("Request body must contain only 'username' and 'password' fields.");
       return;

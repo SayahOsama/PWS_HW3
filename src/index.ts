@@ -18,13 +18,13 @@ await mongoose.connect(dbURI);
 
 const server = createServer((req: IncomingMessage, res: ServerResponse) => {
   const route = createRoute(req.url, req.method);
-  if (req.url.match(/\/api\/event\/organizer\/\w+/)) {
+  if (req.url.match(/\/api\/event\/organizer\/[\w=&?]*/)) {
     if(req.method === "GET"){
       getEventsByOrganizer(req, res);
       return;
     }
   }
-  if (req.url.match(/\/api\/event\/\w+/)) {
+  if (req.url.match(/\/api\/event\/[\w=&?]*/)) {
     if(req.method === "DELETE"){
       deleteEvent(req, res);
       return;
@@ -37,27 +37,50 @@ const server = createServer((req: IncomingMessage, res: ServerResponse) => {
       getEventsByIdOrCategory(req, res);
       return;
     }
+    if(req.method === "POST"){
+      createEvent(req, res);
+      return;
+    }
   }
+  if (req.url.match(/\/api\/login\?[\w=&?]*/) && req.method === "POST") {
+    loginRoute(req, res);
+    return;
+  }
+
+  if (req.url.match(/\/api\/signup\?[\w=&]*/) && req.method === "POST") {
+    signupRoute(req, res);
+    return;
+  }
+
+  if (req.url.match(/\/api\/permission\?[\w=&]*/) && req.method === "PUT") {
+    updatePrivileges(req, res);
+    return;
+  }
+
+
+
+
   switch (route) {
     case LOGIN:
       loginRoute(req, res);
-      break;
+      return;
     case SIGNUP:
       signupRoute(req, res);
-      break;
+      return;
     case PERMISSION:
       updatePrivileges(req, res);
-      break;
+      return;
     case MAIN_ROOT:
       mainRoute(req, res);
-      break;
+      return;
     case CREATE_EVENT:
       createEvent(req, res);
-      break;
+      return;
     default:
       res.statusCode = 404;
       res.write(" API Path not found"); // build in js function, to convert json to a string
       res.end();
+      return;
   }
 });
 

@@ -1,32 +1,13 @@
 import { IncomingMessage, ServerResponse } from "http";
-import { protectedRout } from "./auth.js";
-import { ERROR_401 } from "./const.js";
-import Event from "./models/events.js";
 import User from "./models/users.js";
 import { start } from "repl";
 import { ifError } from "assert";
+import jwt from "jsonwebtoken";
+import * as bcrypt from "bcrypt";
+import { v4 as uuidv4 } from "uuid";
+import mongoose from "mongoose";
+import * as dotenv from "dotenv";
 
-const exampleData = {
-  title: "This is a nice example!",
-  subtitle: "Good Luck! :)",
-};
-
-// const getCookies = (req) => {
-//   const cookieHeader = req.headers['cookie'];
-//   const cookies = {};
-
-//   if (cookieHeader) {
-//     const cookieStrings = cookieHeader.split(';');
-//     cookieStrings.forEach(cookieString => {
-//       const parts = cookieString.split('=');
-//       const name = parts[0].trim();
-//       const value = parts[1] ? parts[1].trim() : '';
-//       cookies[name] = value;
-//     });
-//   }
-
-//   return cookies;
-// };
 
 const parseSearchParams = (url: string): { [key: string]: string } => {
   const searchParams: { [key: string]: string } = {};
@@ -48,35 +29,168 @@ const parseSearchParams = (url: string): { [key: string]: string } => {
   return searchParams;
 };
 
-export const createRoute = (url: string, method: string) => {
-  return `${method} ${url}`;
-};
-
 export const mainRoute = (req: IncomingMessage, res: ServerResponse) => {
   res.statusCode = 200;
   res.setHeader("Content-Type", "text/html");
-  res.write("<h1>Hello Yedidi! API:</h1>");
+  res.write("<h1>Users API Documentation</h1>");
   res.write(`<ul>
-      <li>segel info. GET /api/segel</li>
-      <li>signin. POST /api/signin</li>
-      <li>login. POST /api/login</li>      
-  </ul>`);
+              <li>GET /api/user - Get the main root.</li>
+              <li>GET /api/user/{id} - Get the user by user ID.</li>
+              <li>GET /api/user/{username} - Get the user by username.</li>
+              <li>GET /api/user/orders/{id} - Get the orders by user ID.</li>
+              <li>POST /api/user - Create a new user.</li>
+              <li>POST /api/user/orders/{id}- Create a new order by user ID.</li>
+              <li>PUT /api/user/permissions - Update user permissions.</li>
+              <li>DELETE /api/user/orders/{id} - Delete order by user ID (for refunds).</li>
+            </ul>`);
   res.end();
   return;
 };
 
-export const getEventsByIdOrCategory = async (req: IncomingMessage, res: ServerResponse) => {
-  const user = protectedRout(req, res);
-  if (user == ERROR_401) {
-    res.statusCode = 401;
-    // res.setHeader("Content-Type", "application/json");
-    // res.write("user is not authorized");
-    //res.end("user is not authorized");
-    return;
+export const deleteOrder = (req: IncomingMessage, res: ServerResponse) => {
+
+  let id;
+  const { url } = req;
+  if (url) {
+    const urlParts = url.split("/");
+    const IdOrNameIndex = urlParts.indexOf("orders") + 1;
+    id = decodeURIComponent(urlParts[IdOrNameIndex]);
   }
+
+  let body = "";
+  req.on("data", (chunk) => {
+    body += chunk.toString();
+  });
+  req.on("end", async () => {
+    // Parse request body as JSON
+    let orderID;
+    try {
+      orderID = JSON.parse(body);
+    } catch (error) {
+      res.statusCode = 400;
+      res.end("Invalid JSON format in request body.");
+      return;
+    }
+
+    const bodyKeys = Object.keys(orderID);
+    if (!bodyKeys.includes("orderID")) {
+      res.statusCode = 400;
+      res.end("Request body must contain the required fields.");
+      return;
+    }
+
+    const orderToDelete = orderID.orderID;
+
+   
+    try {
+      // Find the user by ID
+      const user = await User.findById(id);
+      if (!user) {
+          res.statusCode = 404;
+          res.end("User does not exist.");
+          return;
+      }
+
+       // Find the index of the order to delete
+       const orderIndex = user.orders.findIndex(order => order.orderID.equals(orderToDelete));
+      
+      // Check if the order exists
+      if (orderIndex === -1) {
+        res.statusCode = 404;
+        res.end("Order does not exist for this user.");
+        return;
+      }
+      
+      // Remove the order from the array
+      user.orders.splice(orderIndex, 1);
+
+      // Save the updated user document
+      await user.save();
+
+      res.statusCode = 204; // deleted the order!
+      res.end("Order Deleted successfully.");
+      } catch (error) {
+          console.error("Error Deleting order:", error);
+          res.statusCode = 500;
+          res.end("Internal server error.");
+      }
+  });
+};
+
+export const createOrder = (req: IncomingMessage, res: ServerResponse) => {
+
+  let id;
+  const { url } = req;
+  if (url) {
+    const urlParts = url.split("/");
+    const IdOrNameIndex = urlParts.indexOf("orders") + 1;
+    id = decodeURIComponent(urlParts[IdOrNameIndex]);
+  }
+
+  let body = "";
+  req.on("data", (chunk) => {
+    body += chunk.toString();
+  });
+  req.on("end", async () => {
+    // Parse request body as JSON
+    let order;
+    try {
+      order = JSON.parse(body);
+    } catch (error) {
+      res.statusCode = 400;
+      res.end("Invalid JSON format in request body.");
+      return;
+    }
+
+    const bodyKeys = Object.keys(order);
+    if (!bodyKeys.includes("orderID") || !bodyKeys.includes("eventID") || !bodyKeys.includes("ticketType") || !bodyKeys.includes("ticketQuantity")) {
+      res.statusCode = 400;
+      res.end("Request body must contain the required fields.");
+      return;
+    }
+
+    const orderID = order.orderID;
+    const eventID = order.eventID;
+    const ticketType = order.ticketType;
+    const ticketQuantity = order.ticketQuantity;
+   
+    try {
+      // Find the user by ID
+      const user = await User.findById(id);
+      if (!user) {
+          res.statusCode = 404;
+          res.end("User does not exist.");
+          return;
+      }
+
+      // Create a new order
+      const newOrder = {
+          orderID: orderID,
+          eventID: eventID,
+          ticketType: ticketType,
+          ticketQuantity: ticketQuantity,
+      };
+
+      // Add the new order to the user's orders array
+      user.orders.push(newOrder);
+
+      // Save the updated user document
+      await user.save();
+
+      res.statusCode = 201; // Created a new order!
+      res.end("Order created successfully.");
+      } catch (error) {
+          console.error("Error creating order:", error);
+          res.statusCode = 500;
+          res.end("Internal server error.");
+      }
+  });
+};
+
+export const getOrders = async (req: IncomingMessage, res: ServerResponse) => {
   let skip = 0;
   let limit = 50;
-  let IdOrCategory;
+  let id;
   const { url } = req;
   if (url) {
     const searchParams = parseSearchParams(url);
@@ -89,31 +203,47 @@ export const getEventsByIdOrCategory = async (req: IncomingMessage, res: ServerR
       if(limit <= 0 || limit >= 50) limit = 50;
     }
     const urlParts = url.split("?")[0].split("/");
-    const IdOrCategoryIndex = urlParts.indexOf("event") + 1;
-    IdOrCategory = decodeURIComponent(urlParts[IdOrCategoryIndex]);
+    const IdOrNameIndex = urlParts.indexOf("orders") + 1;
+    id = decodeURIComponent(urlParts[IdOrNameIndex]);
   }
-  let event;
   try{
-    const id = IdOrCategory;
-    event = await Event.findById(id);
-    if(event){
+    const user = await User.findById(id);
+    if(user){
+      const orders = user.orders.slice(skip, skip + limit);
       res.statusCode = 200;
       res.setHeader('Content-Type', 'application/json');
-      res.end(JSON.stringify( event ));
+      res.end(JSON.stringify(orders));
+      return;
+    }
+  }catch(error){
+    res.statusCode = 400;
+    res.end(error.message);
+    return;
+  }
+};
+
+export const getUserByIdOrName = async (req: IncomingMessage, res: ServerResponse) => {
+  let IdOrName;
+  const { url } = req;
+  if (url) {
+    const urlParts = url.split("/");
+    const IdOrNameIndex = urlParts.indexOf("user") + 1;
+    IdOrName = decodeURIComponent(urlParts[IdOrNameIndex]);
+  }
+  let user;
+  try{
+    const id = IdOrName;
+    user = await User.findById(id);
+    if(user){
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify(user));
       return;
     }
   }catch(error){}
-  const validEvents = ['Charity Event', 'Concert', 'Conference', 'Convention', 'Exhibition', 'Festival', 'Product Launch', 'Sports Event'];
-  if(!validEvents.includes(String(IdOrCategory))){
-    res.statusCode = 404;
-    res.end();
-    return;
-  }
-  let events;
+  
   try{
-    events = await Event.find({category: IdOrCategory })
-                              .skip(skip)
-                              .limit(limit);
+    user = await User.findOne({ username: IdOrName });
   }catch(error){
     res.statusCode = 400;
     res.end(error.message);
@@ -123,68 +253,75 @@ export const getEventsByIdOrCategory = async (req: IncomingMessage, res: ServerR
     
   res.statusCode = 200;
   res.end(
-    JSON.stringify(events)
+    JSON.stringify(user)
   );
   return;
 };
 
-export const getEventsByOrganizer = async (req: IncomingMessage, res: ServerResponse) => {
-  const user = protectedRout(req, res);
-  if (user == ERROR_401) {
-    res.statusCode = 401;
-    // res.setHeader("Content-Type", "application/json");
-    // res.write("user is not authorized");
-    //res.end("user is not authorized");
-    return;
-  }
-
-  let skip = 0;
-  let limit = 50;
-  let organizer;
-  const { url } = req;
-  if (url) {
-    const searchParams = parseSearchParams(url);
-    if(searchParams["skip"]){
-      skip = parseInt(searchParams["skip"]);
-      if(skip < 0) skip = 0;
+export const createUser = (req: IncomingMessage, res: ServerResponse) => {
+  let body = "";
+  req.on("data", (chunk) => {
+    body += chunk.toString();
+  });
+  req.on("end", async () => {
+    // Parse request body as JSON
+    let credentials;
+    try {
+      credentials = JSON.parse(body);
+    } catch (error) {
+      res.statusCode = 400;
+      res.end("Invalid JSON format in request body.");
+      return;
     }
-    if(searchParams["limit"]){
-      limit = parseInt(searchParams["limit"]);
-      if(limit <= 0 || limit > 50) limit = 50;
-    }
-    const urlParts = url.split("?")[0].split("/");
-    const organizerIndex = urlParts.indexOf("organizer") + 1;
-    organizer = decodeURIComponent(urlParts[organizerIndex]);
-  }
-  let events;
-  try{
-    events = await Event.find({ organizer })
-                              .skip(skip)
-                              .limit(limit);
-  }catch(error){
-    res.statusCode = 400;
-    res.end(error.message);
-    return;
-  }
 
-    
-  res.statusCode = 200;
-  res.end(
-    JSON.stringify( events)
-  );
-  return;
+    const bodyKeys = Object.keys(credentials);
+    if (!bodyKeys.includes("username") || !bodyKeys.includes("password")) {
+      res.statusCode = 400;
+      res.end("Request body must contain only 'username' and 'password' fields.");
+      return;
+    }
+
+    const username = credentials.username;
+    const password = await bcrypt.hash(credentials.password, 10);
+    if(username.length == 0){
+      res.statusCode = 400;
+      res.end("Invalid username");
+      return;
+    }
+
+    if(credentials.password.length == 0){
+      res.statusCode = 400;
+      res.end("Invalid password");
+      return;
+    }
+
+    const existingUser = await User.findOne({ username });
+    if (existingUser) {
+      res.statusCode = 400;
+      res.end("Username already exists");
+      return;
+    }
+
+    // Create a new user document
+    const newUser = new User({
+      username: username,
+      password: password,
+      permission: "U"
+    });
+
+    // Save the user to the database
+    await newUser.save();
+
+    res.statusCode = 201; // Created a new user!
+    res.end(
+      JSON.stringify({
+        username,
+      })
+    );
+  });
 };
 
 export const updatePrivileges = (req: IncomingMessage, res: ServerResponse) => {
-  const user = protectedRout(req, res);
-  if (user == ERROR_401) {
-    res.statusCode = 401;
-    // res.setHeader("Content-Type", "application/json");
-    // res.write("user is not authorized");
-    // res.end("user is not authorized");
-    return;
-  }
-
   let body = "";
   req.on("data", (chunk) => {
     body += chunk.toString();
@@ -201,12 +338,12 @@ export const updatePrivileges = (req: IncomingMessage, res: ServerResponse) => {
     }
 
     const bodyKeys = Object.keys(privilege);
-    if (bodyKeys.length !== 2 || !bodyKeys.includes("username") || !bodyKeys.includes("permission")) {
+    if (!bodyKeys.includes("userID") || !bodyKeys.includes("username") || !bodyKeys.includes("permission")) {
       res.statusCode = 400;
       res.end("Request body must contain only 'username' and 'permission' fields.");
       return;
     }
-    const loggedUser = await User.findById(user.id);
+    const loggedUser = await User.findById(privilege.userID);
     const username = privilege.username;
     const permission = privilege.permission;
     const existingUser = await User.findOne({ username });
@@ -239,7 +376,7 @@ export const updatePrivileges = (req: IncomingMessage, res: ServerResponse) => {
       res.end("there is no such permission.");
       return;
     }
-    // const updatedUser = await User.findOneAndUpdate({ username }, {permission: {permission}}, { new: true });
+    
     existingUser.permission = permission;
     await existingUser.save();
     res.statusCode = 200;
@@ -248,319 +385,3 @@ export const updatePrivileges = (req: IncomingMessage, res: ServerResponse) => {
   });
 };
 
-export const updateEvent = async (req: IncomingMessage, res: ServerResponse) => {
-  const user = protectedRout(req, res);
-  if (user == ERROR_401) {
-    res.statusCode = 401;
-    // res.setHeader("Content-Type", "application/json");
-    // res.write("user is not authorized");
-    //res.end("user is not authorized");
-    return;
-  }
-  const loggedUser = await User.findById(user.id);
-  if(loggedUser.permission != "A" && loggedUser.permission != "M"){
-    res.statusCode = 403;
-    res.end("you lack sufficient permissions to update event.");
-    return;
-  }
-  const id = req.url.split("/")[3];
-
-
-  let body = "";
-  req.on("data", (chunk) => {
-    body += chunk.toString();
-  });
-  req.on("end", async () => {
-    // Parse request body as JSON
-    let fields;
-    try {
-      fields = JSON.parse(body);
-    } catch (error) {
-      res.statusCode = 400;
-      res.end("Invalid JSON format in request body.");
-      return;
-    }
-
-    // Check if the parsed JSON is an empty object
-    if (Object.keys(fields).length === 0 && fields.constructor === Object) {
-      res.statusCode = 200;
-      res.end();
-      return;
-    }
-
-    const bodyKeys = Object.keys(fields);
-    let newEvent = {};
-    bodyKeys.forEach(async (field)=>{
-      const eventFields = ["title", "category", "description", "organizer", "start_date", "end_date", "location", "tickets","image"];
-      const categories = ['Charity Event', 'Concert', 'Conference', 'Convention', 'Exhibition', 'Festival', 'Product Launch', 'Sports Event'];
-      if(eventFields.includes(field)){
-        const value = fields[field];
-        if(value === ""){
-          res.statusCode = 400;
-          res.end();
-          return;
-        } 
-      }
-      switch (field) {
-        case "title":
-          newEvent["title"] = fields["title"];
-          break;
-        case "category":
-          if(!categories.includes(fields["category"])){
-            res.statusCode = 400;
-            res.end();
-            return;
-          }
-          newEvent["category"] = fields["category"];
-          break;
-        case "description":
-          newEvent["description"] = fields["description"];
-          break;
-        case "organizer":
-          newEvent["organizer"] = fields["organizer"];
-          break;
-        case "start_date":
-          const date_start = new Date(fields["start_date"]);
-          if (isNaN(date_start.getTime())) {
-            res.statusCode = 400;
-            res.end("invalid date format");
-            return;
-          }
-          newEvent["start_date"] = fields["start_date"];
-          break;
-        case "end_date":
-          const date_end = new Date(fields["end_date"]);
-          if (isNaN(date_end.getTime())) {
-            res.statusCode = 400;
-            res.end("invalid date format");
-            return;
-          }
-          newEvent["end_date"] = fields["end_date"];
-          break;
-        case "location":
-          newEvent["location"] = fields["location"];
-          break;
-        case "tickets":
-          if(fields["tickets"].length == 0){
-            res.statusCode = 400;
-            res.end();
-            return;
-          }
-          if (!Array.isArray(fields["tickets"])) {
-            res.statusCode = 400;
-            res.end("Tickets must be an array.");
-            return;
-          }
-          newEvent["tickets"] = fields["tickets"];
-          break;
-        case "image":
-          newEvent["image"] = fields["image"];
-          break;
-       
-      }
-
-    let eventToUpdate;
-    try{
-      eventToUpdate = await Event.findById(id);
-    }catch(error){}
-
-    if(!eventToUpdate){
-      res.statusCode = 404;
-      res.end("event does not exist.");
-      return;
-    }
-
-    Object.keys(newEvent).forEach((field)=>{
-      switch (field) {
-        case "title":
-          eventToUpdate.title = newEvent["title"];
-          break;
-        case "category":
-          eventToUpdate.category = newEvent["category"];
-          break;
-        case "description":
-          eventToUpdate.description = newEvent["description"];
-          break;
-        case "organizer":
-          eventToUpdate.organizer = newEvent["organizer"];
-          break;
-        case "start_date":
-          eventToUpdate.start_date = newEvent["start_date"];
-          break;
-        case "end_date":
-          eventToUpdate.end_date = newEvent["end_date"];
-          break;
-        case "location":
-          eventToUpdate.location = newEvent["location"];
-          break;
-        case "tickets":
-          eventToUpdate.tickets = newEvent["tickets"];
-          break;
-        case "image":
-          eventToUpdate.image = newEvent["image"];
-          break;
-      }
-    });
-      
-      try{
-        await eventToUpdate.save();
-        // await eventToUpdate.update(newEvent);
-        res.statusCode = 200;
-        res.end(
-          JSON.stringify(
-            {_id: eventToUpdate._id}
-          )
-        );
-      }catch(error){
-        res.statusCode = 400;
-        res.end(error.message);
-        return;
-      }
-  });
-    
-  // return;
-  });
-};
-
-export const deleteEvent = async (req: IncomingMessage, res: ServerResponse) => {
-  const user = protectedRout(req, res);
-  if (user == ERROR_401) {
-    res.statusCode = 401;
-    // res.setHeader("Content-Type", "application/json");
-    // res.write("user is not authorized");
-    //res.end("user is not authorized");
-    return;
-  }
-  const loggedUser = await User.findById(user.id);
-  if(loggedUser.permission != "A"){
-    res.statusCode = 403;
-    res.end("you lack sufficient permissions to delete event.");
-    return;
-  }
-  const id = req.url.split("/")[3];
-  try {
-    // Use Mongoose to find and delete the event by its ID
-    await Event.findByIdAndDelete(id);
-  } catch (error) {}
-  res.statusCode = 200;
-  res.end();
-  return;
-};
-
-export const createEvent = (req: IncomingMessage, res: ServerResponse) => {
-  const user = protectedRout(req, res);
-  if (user == ERROR_401) {
-    res.statusCode = 401;
-    // res.setHeader("Content-Type", "application/json");
-    // res.write("user is not authorized");
-    //res.end("user is not authorized");
-    return;
-  }
-
-  let body = "";
-  req.on("data", (chunk) => {
-    body += chunk.toString();
-  });
-  req.on("end", async () => {
-    // Parse request body as JSON
-    
-    let event;
-    try {
-      event = JSON.parse(body);
-    } catch (error) {
-      res.statusCode = 400;
-      res.end("Invalid JSON format in request body.");
-      return;
-    }
-   
-    const requiredFields = ["title", "category", "description", "organizer", "start_date", "end_date", "location", "tickets"];
-    for (const field of requiredFields) {
-      if (!event[field]) {
-        res.statusCode = 400;
-        res.end(`Missing required field: ${field}`);
-        return;
-      }
-    }
-
-    const loggedUser = await User.findById(user.id);
-    if(loggedUser.permission != "A" && loggedUser.permission != "M"){
-      res.statusCode = 403;
-      res.end("you lack sufficient permissions to create event.");
-      return;
-    }
-    
-    try{
-      const title = event.title;
-      const category = event.category;
-      const description = event.description;
-      const organizer = event.organizer;
-      const start_date = event.start_date;
-      const end_date = event.end_date;
-      const date_start = new Date(start_date);
-      if (isNaN(date_start.getTime())) {
-        res.statusCode = 400;
-        res.end("invalid date format");
-        return;
-      }
-      const date_end = new Date(end_date);
-      if (isNaN(date_end.getTime())) {
-        res.statusCode = 400;
-        res.end("invalid date format");
-        return;
-      }
-      const location = event.location;
-      const tickets = event.tickets;
-      let image;
-      let newEvent;
-      const containsImage = event["image"];
-      if(containsImage){
-        image = event.image;
-        newEvent = new Event({
-          title: title,
-          category: category,
-          description: description,
-          organizer: organizer,
-          start_date: start_date, 
-          end_date: end_date,
-          location: location, 
-          tickets: tickets,
-          image: image, 
-        });
-      }else{
-        newEvent = new Event({
-          title: title,
-          category: category,
-          description: description,
-          organizer: organizer,
-          start_date: start_date, 
-          end_date: end_date,
-          location: location, 
-          tickets: tickets,
-        });
-      }
-      await newEvent.save(newEvent);
-      res.statusCode = 201;
-      res.end(
-        JSON.stringify(
-          {_id: newEvent._id}
-        )
-      );
-      return;
-    }catch(error){
-      res.statusCode = 400;
-      res.end(error.message);
-      return;
-    }
-  });
-};
-
-export const getExample = (req: IncomingMessage, res: ServerResponse) => {
-  const user = protectedRout(req, res);
-  if (user !== ERROR_401) {
-    res.statusCode = 401;
-    // res.setHeader("Content-Type", "application/json");
-    // res.write(JSON.stringify({ data: { ...exampleData }, user: { ...user } })); // build in js function, to convert json to a string
-    res.end(JSON.stringify({ data: { ...exampleData }, user: { ...user } }));
-    return;
-  }
-};

@@ -1,5 +1,5 @@
 {
-  "name": "hw3-node-ts-auth",
+  "name": "final_project_users",
   "version": "1.0.0",
   "description": "",
   "main": "index.js",
@@ -7,11 +7,10 @@
   "scripts": {
     "build": "tsc",
     "start": "node ./dist/index.js",
-    "dev": "tsc-watch --onSuccess \"node ./dist/index.js\" --compiler typescript/bin/tsc",
-    "test": "node scripts/test.js"
+    "dev": "tsc-watch --onSuccess \"node ./dist/index.js\" --compiler typescript/bin/tsc"
   },
   "keywords": [],
-  "author": "nissano-wsp-2022",
+  "author": "osama-sayah",
   "license": "ISC",
   "devDependencies": {
     "@types/node": "^18.11.9",
